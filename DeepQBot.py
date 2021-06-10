@@ -48,7 +48,7 @@ import json
 
 # Load creds modules
 from helpers.handle_creds import (
-    load_correct_creds, test_api_key
+    test_api_key
 )
 
 # for colourful logging to the console
@@ -147,7 +147,7 @@ class DeepQBot(object):
         if self.AMERICAN_USER:
             self.client = Client(self.access_key, self.secret_key, tld='us')
         else:
-            self.client = Client(self.access_key, self.secret_key)        
+            self.client = Client(self.access_key, self.secret_key)
 
         # If the users has a bad / incorrect API key.
         # this will stop the script from starting, and display a helpful error.
@@ -188,14 +188,14 @@ class DeepQBot(object):
     def run_bot(self):
         
         while True:
-            try:
-                time.sleep((self.TIME_DIFFERENCE*60))
-                orders, last_price, volume = self.buy()
-                self.update_portfolio(orders, last_price, volume)
-                coins_sold = self.sell_coins()
-                self.remove_from_portfolio(coins_sold)
-            except:
-                pass
+            #try:
+            self.pause_bot()
+            orders, last_price, volume = self.buy()
+            self.update_portfolio(orders, last_price, volume)
+            coins_sold = self.sell_coins()
+            self.remove_from_portfolio(coins_sold)
+            #except:
+                #pass
 
     def get_price(self, add_to_historical=True):
         '''Return the current price for all coins on binance'''
@@ -233,7 +233,7 @@ class DeepQBot(object):
         coins_down = 0
         coins_unchanged = 0
 
-        self.pause_bot()
+        #self.pause_bot()
 
         if self.historical_prices[self.hsp_head]['BNB' + self.PAIR_WITH]['time'] > datetime.now() - timedelta(minutes=float(self.TIME_DIFFERENCE / self.RECHECK_INTERVAL)):
 
@@ -288,9 +288,6 @@ class DeepQBot(object):
             else:
                 coins_unchanged +=1
 
-        # Disabled until fix
-        #print(f'Up: {coins_up} Down: {coins_down} Unchanged: {coins_unchanged}')
-
         return volatile_coins, len(volatile_coins), self.historical_prices[self.hsp_head]        
 
     def external_signals(self):
@@ -334,33 +331,33 @@ class DeepQBot(object):
                 timeout= 10
             )
         
-        try:
-            first_analysis = first_handler[pair].get_analysis()
-            second_analysis = second_handler[pair].get_analysis()
-        except Exception as e:
-            print("Signalsample:")
-            print("Exception:")
-            print(e)
-            print (f'Coin: {pair}')
-            print (f'First handler: {first_handler[pair]}')
-            print (f'Second handler: {second_handler[pair]}')
+            try:
+                first_analysis = first_handler[pair].get_analysis()
+                second_analysis = second_handler[pair].get_analysis()
+            except Exception as e:
+                print("Signalsample:")
+                print("Exception:")
+                print(e)
+                print (f'Coin: {pair}')
+                print (f'First handler: {first_handler[pair]}')
+                print (f'Second handler: {second_handler[pair]}')
 
-        first_tacheck = first_analysis.summary['BUY']
-        first_recommendation = first_analysis.summary['RECOMMENDATION']
-        first_RSI = float(first_analysis.indicators['RSI'])
+            first_tacheck = first_analysis.summary['BUY']
+            first_recommendation = first_analysis.summary['RECOMMENDATION']
+            first_RSI = float(first_analysis.indicators['RSI'])
 
-        second_tacheck = second_analysis.summary['BUY']
-        second_recommendation = second_analysis.summary['RECOMMENDATION']
-        second_RSI = float(second_analysis.indicators['RSI'])
+            second_tacheck = second_analysis.summary['BUY']
+            second_recommendation = second_analysis.summary['RECOMMENDATION']
+            second_RSI = float(second_analysis.indicators['RSI'])
 
-        if (first_recommendation == "BUY" or first_recommendation == "STRONG_BUY") and (second_recommendation == "BUY" or second_recommendation == "STRONG_BUY"):
-                if first_RSI <= 67 and second_RSI <= 67 :
-                    buy_coins[pair] = pair
-                    print(f'Signalsample: Buy Signal detected on {pair}')
-     
-        elif (first_recommendation == "SELL" or first_recommendation == "STRONG_SELL") and (second_recommendation == "SELL" or second_recommendation == "STRONG_SELL"):
-                sell_coins[pair] = pair
-                print(f'Signalsample: Sell Signal detected on {pair}')
+            if (first_recommendation == "BUY" or first_recommendation == "STRONG_BUY") and (second_recommendation == "BUY" or second_recommendation == "STRONG_BUY"):
+                    if first_RSI <= 67 and second_RSI <= 67 :
+                        buy_coins[pair] = pair
+                        #print(f'Signalsample: Buy Signal detected on {pair}')
+        
+            elif (first_recommendation == "SELL" or first_recommendation == "STRONG_SELL") and (second_recommendation == "SELL" or second_recommendation == "STRONG_SELL"):
+                    sell_coins[pair] = pair
+                    #print(f'Signalsample: Sell Signal detected on {pair}')
 
         return buy_coins, sell_coins
 
@@ -378,26 +375,26 @@ class DeepQBot(object):
         first_handler = {}
         second_handler = {}
         
-        first_handler = TA_Handler(
-                symbol=SYMBOL,
-                exchange=EXCHANGE,
-                screener=SCREENER,
-                interval=MY_FIRST_INTERVAL,
-                timeout= 10)
-        
-        second_handler = TA_Handler(
-                symbol=SYMBOL,
-                exchange=EXCHANGE,
-                screener=SCREENER,
-                interval=MY_SECOND_INTERVAL,
-                timeout= 10)
-
         # start counting for how long the bot's been paused
         start_time = time.perf_counter()
 
-        self.bot_paused == True
+        self.bot_paused = True
         while self.bot_paused == True:
             
+            first_handler = TA_Handler(
+                    symbol=SYMBOL,
+                    exchange=EXCHANGE,
+                    screener=SCREENER,
+                    interval=MY_FIRST_INTERVAL,
+                    timeout= 10)
+            
+            second_handler = TA_Handler(
+                    symbol=SYMBOL,
+                    exchange=EXCHANGE,
+                    screener=SCREENER,
+                    interval=MY_SECOND_INTERVAL,
+                    timeout= 10)
+
             try:
                 first_analysis = first_handler.get_analysis()
                 second_analysis = second_handler.get_analysis()
@@ -411,11 +408,12 @@ class DeepQBot(object):
 
             if first_market_summary == "SELL" or first_market_summary == "STRONG_SELL" or second_market_summary == "SELL" or second_market_summary == "STRONG_SELL":
                 self.bot_paused = True
-                print(f'pausebotmod: Market not looking too good, bot paused from buying {first_analysis.summary} {second_analysis.summary} .Waiting {TIME_TO_WAIT} minutes for next market checkup')
+                print(f'Market not looking too good, bot paused from buying {first_analysis.summary} {second_analysis.summary} .Waiting {(self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL} minutes for next market checkup')
 
             else:
-                print(f'pausebotmod: Market looks ok, bot is running {first_analysis.summary} {second_analysis.summary} .Waiting {TIME_TO_WAIT} minutes for next market checkup ')
+                print(f'Market looks ok, bot is running {first_analysis.summary} {second_analysis.summary} .Waiting {(self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL} minutes for next market checkup ')
                 self.bot_paused = False
+                return
 
             print(f'{txcolors.WARNING}Pausing buying due to change in market conditions, stop loss and take profit will continue to work...{txcolors.DEFAULT}')
 
@@ -426,14 +424,11 @@ class DeepQBot(object):
 
             # pausing here
             if self.hsp_head == 1: print(f'Paused...Session profit:{self.session_profit:.2f}% Est:${(self.QUANTITY * self.session_profit)/100:.2f}')
-            time.sleep((self.TIME_DIFFERENCE * 60) / self.RECHECK_INTERVAL)
+            time.sleep((self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL)
 
-        else:
-            # stop counting the pause time
-            stop_time = time.perf_counter()
-            time_elapsed = timedelta(seconds=int(stop_time-start_time))
-
-            print(f'{txcolors.WARNING}Resuming buying due to change in market conditions, total sleep time: {time_elapsed}{txcolors.DEFAULT}')
+        stop_time = time.perf_counter()
+        time_elapsed = timedelta(seconds=int(stop_time-start_time))
+        print(f'{txcolors.WARNING}Resuming buying due to change in market conditions, total sleep time: {time_elapsed}{txcolors.DEFAULT}')
 
         return
 
@@ -530,7 +525,6 @@ class DeepQBot(object):
                         # Log trade
                         if self.LOG_TRADES:
                             self.write_log(f"Buy : {volume[coin]} {coin} - {last_price[coin]['price']}")
-
 
             else:
                 print(f'Signal detected, but there is already an active trade on {coin}')
