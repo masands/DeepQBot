@@ -12,6 +12,12 @@ and that no claims can be made against the developers,
 or others connected with the program.
 """
 
+# Keras library
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+
 # trading view library
 from tradingview_ta import TA_Handler, Interval, Exchange
 
@@ -189,7 +195,7 @@ class DeepQBot(object):
         
         while True:
             #try:
-            self.pause_bot()
+            #self.pause_bot()
             orders, last_price, volume = self.buy()
             self.update_portfolio(orders, last_price, volume)
             coins_sold = self.sell_coins()
@@ -267,10 +273,10 @@ class DeepQBot(object):
 
                     if len(self.coins_bought) + len(volatile_coins) < self.MAX_COINS or self.MAX_COINS == 0:
                         #volatile_coins[coin] = round(threshold_check, 3)
-                        print(f'{coin} has gained {round(threshold_check, 3)}% within the last {self.TIME_DIFFERENCE} minutes.')
+                        #print(f'{coin} has gained {round(threshold_check, 3)}% within the last {self.TIME_DIFFERENCE} minutes.')
                         
                         # Here goes new code for external signalling
-                        externals, _ = self.external_signals()
+                        externals, _, _ = self.external_signals()
                         exnumber = 0
 
                         for excoin in externals:
@@ -295,18 +301,15 @@ class DeepQBot(object):
 
         MY_EXCHANGE = 'BINANCE'
         MY_SCREENER = 'CRYPTO'
-        MY_FIRST_INTERVAL = Interval.INTERVAL_5_MINUTES
-        MY_SECOND_INTERVAL = Interval.INTERVAL_15_MINUTES
+        INTERVAL = Interval.INTERVAL_5_MINUTES
         PAIR_WITH = 'USDT'
         TIME_TO_WAIT = 5 # Minutes to wait between analysis
         FULL_LOG = False # List anylysis result to console
 
         buy_coins = {}
         sell_coins = {}
-        first_analysis = {}
-        second_analysis = {}
-        first_handler = {}
-        second_handler = {}
+        analysis = {}
+        handler = {}
         pairs = {}
 
         pairs=[line.strip() for line in open(self.TICKERS_LIST)]
@@ -315,51 +318,32 @@ class DeepQBot(object):
 
         for pair in pairs:
         
-            first_handler[pair] = TA_Handler(
+            handler[pair] = TA_Handler(
                 symbol=pair,
                 exchange=MY_EXCHANGE,
                 screener=MY_SCREENER,
-                interval=MY_FIRST_INTERVAL,
+                interval=INTERVAL,
                 timeout= 10
             )
-            
-            second_handler[pair] = TA_Handler(
-                symbol=pair,
-                exchange=MY_EXCHANGE,
-                screener=MY_SCREENER,
-                interval=MY_SECOND_INTERVAL,
-                timeout= 10
-            )
-        
+                    
             try:
-                first_analysis = first_handler[pair].get_analysis()
-                second_analysis = second_handler[pair].get_analysis()
+                analysis = handler[pair].get_analysis()
             except Exception as e:
                 print("Signalsample:")
                 print("Exception:")
                 print(e)
                 print (f'Coin: {pair}')
-                print (f'First handler: {first_handler[pair]}')
-                print (f'Second handler: {second_handler[pair]}')
+                print (f'Handler: {handler[pair]}')
 
-            first_tacheck = first_analysis.summary['BUY']
-            first_recommendation = first_analysis.summary['RECOMMENDATION']
-            first_RSI = float(first_analysis.indicators['RSI'])
+            data = list(analysis.indicators.values())
+            state = np.array(data)
 
-            second_tacheck = second_analysis.summary['BUY']
-            second_recommendation = second_analysis.summary['RECOMMENDATION']
-            second_RSI = float(second_analysis.indicators['RSI'])
+            if self.action == 0:
+                buy_coins[pair] = pair
+            elif self.action == 1:
+                sell_coins[pair] = pair
 
-            if (first_recommendation == "BUY" or first_recommendation == "STRONG_BUY") and (second_recommendation == "BUY" or second_recommendation == "STRONG_BUY"):
-                    if first_RSI <= 67 and second_RSI <= 67 :
-                        buy_coins[pair] = pair
-                        #print(f'Signalsample: Buy Signal detected on {pair}')
-        
-            elif (first_recommendation == "SELL" or first_recommendation == "STRONG_SELL") and (second_recommendation == "SELL" or second_recommendation == "STRONG_SELL"):
-                    sell_coins[pair] = pair
-                    #print(f'Signalsample: Sell Signal detected on {pair}')
-
-        return buy_coins, sell_coins
+        return buy_coins, sell_coins, state
 
     def pause_bot(self):
         '''Pause the script when exeternal indicators detect a bearish trend in the market'''
@@ -370,6 +354,7 @@ class DeepQBot(object):
         EXCHANGE = 'BINANCE'
         SCREENER = 'CRYPTO'
         SYMBOL = 'BTCUSDT'
+        PAUSE_INTERVAL = 1 # Minutes
 
         analysis = {}
         first_handler = {}
@@ -408,10 +393,10 @@ class DeepQBot(object):
 
             if first_market_summary == "SELL" or first_market_summary == "STRONG_SELL" or second_market_summary == "SELL" or second_market_summary == "STRONG_SELL":
                 self.bot_paused = True
-                print(f'Market not looking too good, bot paused from buying {first_analysis.summary} {second_analysis.summary} .Waiting {(self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL} minutes for next market checkup')
+                print(f'Market not looking too good, bot paused from buying {first_analysis.summary} {second_analysis.summary} .Waiting {PAUSE_INTERVAL} minutes for next market checkup')
 
             else:
-                print(f'Market looks ok, bot is running {first_analysis.summary} {second_analysis.summary} .Waiting {(self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL} minutes for next market checkup ')
+                print(f'Market looks ok, bot is running {first_analysis.summary} {second_analysis.summary}')
                 self.bot_paused = False
                 return
 
@@ -424,7 +409,7 @@ class DeepQBot(object):
 
             # pausing here
             if self.hsp_head == 1: print(f'Paused...Session profit:{self.session_profit:.2f}% Est:${(self.QUANTITY * self.session_profit)/100:.2f}')
-            time.sleep((self.TIME_DIFFERENCE) / self.RECHECK_INTERVAL)
+            time.sleep(PAUSE_INTERVAL)
 
         stop_time = time.perf_counter()
         time_elapsed = timedelta(seconds=int(stop_time-start_time))
@@ -535,7 +520,7 @@ class DeepQBot(object):
         '''sell coins that have reached the STOP LOSS or TAKE PROFIT threshold'''
 
         # Here goes new code for external signalling
-        _, externals = self.external_signals()
+        _, externals, _ = self.external_signals()
         #print(externals)
         last_price = self.get_price(False) # don't populate rolling window
         #last_price = get_price(add_to_historical=True) # don't populate rolling window
@@ -639,7 +624,140 @@ class DeepQBot(object):
         with open(self.LOG_FILE,'a+') as f:
             f.write(timestamp + ' ' + logline + '\n')
 
+    def deepQModel(self):
+        '''Build a neural network model'''
 
+        num_inputs = 87 # Default number of trading view indicators
+        num_actions = 3 # Buy, Sell, Hold
+        num_hidden = 10
+
+        inputs = layers.Input(shape=(num_inputs,))
+        common_1 = layers.Dense(num_hidden, activation="relu")(inputs)
+        common_2 = layers.Dense(num_hidden, activation="relu")(common_1)
+        common_3 = layers.Dense(num_hidden, activation="relu")(common_2)
+        action = layers.Dense(num_actions, activation="softmax")(common_3)
+        critic = layers.Dense(1)(common_3)
+
+        model = keras.Model(inputs=inputs, outputs=[action, critic])
+
+        return model
+    
+    def step(self, action):
+            '''Execute a single step'''
+
+            #self.pause_bot()
+            orders, last_price, volume = self.buy()
+            self.update_portfolio(orders, last_price, volume)
+            coins_sold = self.sell_coins()
+            self.remove_from_portfolio(coins_sold)
+            return
+
+    def trainNetwork(self):
+        '''Train the RL Network'''
+
+        optimizer = keras.optimizers.Adam(learning_rate=0.01)
+        huber_loss = keras.losses.Huber()
+        action_probs_history = []
+        critic_value_history = []
+        rewards_history = []
+        running_reward = 0
+        episode_count = 0
+        max_steps_per_episode = 5
+        gamma = 0.99
+        eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
+        num_actions = 3 # Buy, Sell, Hold
+        self.action = None
+        
+        # Load the Model
+        model = self.deepQModel()
+
+        while True:  # Run until solved
+            _, _, state = self.external_signals()
+            episode_reward = 0
+            
+            with tf.GradientTape() as tape:
+                for timestep in range(1, max_steps_per_episode):
+                    
+                    iteration_profit = self.session_profit
+                    state = tf.convert_to_tensor(state)
+                    state = tf.expand_dims(state, 0)
+
+                    # Predict action probabilities and estimated future rewards
+                    # from environment state
+                    action_probs, critic_value = model(state)
+                    critic_value_history.append(critic_value[0, 0])
+
+                    # Sample action from action probability distribution
+                    self.action = np.random.choice(num_actions, p=np.squeeze(action_probs))
+                    action_probs_history.append(tf.math.log(action_probs[0, self.action]))
+
+                    # Apply the sampled action in our environment
+                    self.step()
+                    # Wait before getting profit
+                    time.sleep(self.RECHECK_INTERVAL)
+                    iteration_profit = self.session_profit - iteration_profit
+                    rewards_history.append(iteration_profit)
+                    episode_reward += iteration_profit
+
+                    # Get new state
+                    _, _, state = self.external_signals()
+
+                # Update running reward to check condition for solving
+                running_reward = episode_reward + running_reward
+
+                # Calculate expected value from rewards
+                # - At each timestep what was the total reward received after that timestep
+                # - Rewards in the past are discounted by multiplying them with gamma
+                # - These are the labels for our critic
+                returns = []
+                discounted_sum = 0
+                for r in rewards_history[::-1]:
+                    discounted_sum = r + gamma * discounted_sum
+                    returns.insert(0, discounted_sum)
+
+                # Normalize
+                returns = np.array(returns)
+                returns = (returns - np.mean(returns)) / (np.std(returns) + eps)
+                returns = returns.tolist()
+
+                # Calculating loss values to update our network
+                history = zip(action_probs_history, critic_value_history, returns)
+                actor_losses = []
+                critic_losses = []
+                for log_prob, value, ret in history:
+                    # At this point in history, the critic estimated that we would get a
+                    # total reward = `value` in the future. We took an action with log probability
+                    # of `log_prob` and ended up recieving a total reward = `ret`.
+                    # The actor must be updated so that it predicts an action that leads to
+                    # high rewards (compared to critic's estimate) with high probability.
+                    diff = ret - value
+                    actor_losses.append(-log_prob * diff)  # actor loss
+
+                    # The critic must be updated so that it predicts a better estimate of
+                    # the future rewards.
+                    critic_losses.append(
+                        huber_loss(tf.expand_dims(value, 0), tf.expand_dims(ret, 0))
+                    )
+
+                # Backpropagation
+                loss_value = sum(actor_losses) + sum(critic_losses)
+                grads = tape.gradient(loss_value, model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+                # Clear the loss and reward history
+                action_probs_history.clear()
+                critic_value_history.clear()
+                rewards_history.clear()
+
+            # Log details
+            episode_count += 1
+            if episode_count % 10 == 0:
+                template = "running reward: {:.2f} at episode {}"
+                print(template.format(running_reward, episode_count))
+
+
+
+    
 
 
 

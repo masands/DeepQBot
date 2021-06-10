@@ -23,4 +23,4 @@ if __name__ == '__main__':
 
     # Create a new bot
     bot = DeepQBot(access_key, secret_key, CHANGE_IN_PRICE = 0.1)
-    bot.run_bot()
+    bot.trainNetwork()
