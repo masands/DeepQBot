@@ -710,7 +710,7 @@ class DeepQBot(object):
 
                     # Sample action from action probability distribution
                     action = np.random.choice(num_actions, p=np.squeeze(action_probs))
-                    action_probs_history.append(tf.math.log(action_probs[0, self.action]))
+                    action_probs_history.append(tf.math.log(action_probs[0, action]))
 
                     # ACTION LIST:
                     # 0: BUY
@@ -738,6 +738,8 @@ class DeepQBot(object):
                         iteration_profit = price_current - price_new # Positive Reward
                     elif action == 1 and price_new > price_current:
                         iteration_profit = price_current - price_new # Negative Reward
+                    else:
+                        iteration_profit = 0
 
                     print(f'DeepQBot: Timestep Profit: {iteration_profit}')
 
@@ -748,7 +750,7 @@ class DeepQBot(object):
                     _, _, state = self.external_signals()
 
                 # Update running reward to check condition for solving
-                running_reward = episode_reward + running_reward
+                running_reward = 0.05 * episode_reward + (1 - 0.05) * running_reward
                 print(f'DeepQBot: Total Profit: {running_reward}')
 
                 # Calculate expected value from rewards
