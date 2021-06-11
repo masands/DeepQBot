@@ -98,20 +98,23 @@ class DeepQBot(object):
     DEBUG_SETTING = False,
     AMERICAN_USER = False,
     PAIR_WITH = 'USDT',
-    QUANTITY = 15,
-    MAX_COINS = 20,
+    QUANTITY = 1000,
+    MAX_COINS = 1,
     FIATS = ['EURUSDT', 'GBPUSDT', 'JPYUSDT', 'USDUSDT', 'DOWN', 'UP'],
     TIME_DIFFERENCE = 5,
     RECHECK_INTERVAL = 6,
-    CHANGE_IN_PRICE = 0.5,
+    CHANGE_IN_PRICE = 0,
     STOP_LOSS = 5,
-    TAKE_PROFIT = 0.65,
+    TAKE_PROFIT = 5,
     CUSTOM_LIST = False,
     TICKERS_LIST = 'tickers.txt',
+    TICKER = "BTC",
     USE_TRAILING_STOP_LOSS = True,
     TRAILING_STOP_LOSS = .2,
     TRAILING_TAKE_PROFIT = .1,
-    TRADING_FEE= .0075
+    TRADING_FEE= .0075,
+    LOAD_MODEL = None,
+    SAVE_MODEL = 'models/my_model.h5'
     ):
         
         # tracks profit/loss each session
@@ -119,6 +122,7 @@ class DeepQBot(object):
 
         # set to false at Start
         self.bot_paused = False
+        self.action = None
         
         # Default no debugging
         self.DEBUG = False
@@ -144,7 +148,12 @@ class DeepQBot(object):
         self.TRAILING_STOP_LOSS = TRAILING_STOP_LOSS
         self.TRAILING_TAKE_PROFIT = TRAILING_TAKE_PROFIT
         self.TRADING_FEE = TRADING_FEE
+        self.TICKER = TICKER
         
+        # Model Parameters
+        self.LOAD_MODEL = LOAD_MODEL
+        self.SAVE_MODEL = SAVE_MODEL
+
         # Load creds for correct environment
         self.access_key = access_key
         self.secret_key = secret_key
@@ -576,7 +585,7 @@ class DeepQBot(object):
                     if self.LOG_TRADES:
                         profit = ((LastPrice - BuyPrice) * coins_sold[coin]['volume'])* (1-(self.TRADING_FEE*2)) # adjust for trading fee here
                         self.write_log(f"Sell: {coins_sold[coin]['volume']} {coin} - {BuyPrice} - {LastPrice} Profit: {profit:.2f} {PriceChange-(self.TRADING_FEE*2):.2f}%")
-                        session_profit=session_profit + (PriceChange-(self.TRADING_FEE*2))
+                        self.session_profit=self.session_profit + (PriceChange-(self.TRADING_FEE*2))
                 continue
 
             # no action; print once every TIME_DIFFERENCE
@@ -642,7 +651,7 @@ class DeepQBot(object):
 
         return model
     
-    def step(self, action):
+    def step(self):
             '''Execute a single step'''
 
             #self.pause_bot()
@@ -662,14 +671,18 @@ class DeepQBot(object):
         rewards_history = []
         running_reward = 0
         episode_count = 0
-        max_steps_per_episode = 5
+        max_steps_per_episode = 100
         gamma = 0.99
         eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
         num_actions = 3 # Buy, Sell, Hold
-        self.action = None
+        action = None
         
-        # Load the Model
-        model = self.deepQModel()
+        if self.LOAD_MODEL != None:
+            # Load an existing model
+            model = keras.models.load_model(self.LOAD_MODEL)
+        else:
+            # Load a New Model
+            model = self.deepQModel()
 
         while True:  # Run until solved
             _, _, state = self.external_signals()
@@ -678,7 +691,15 @@ class DeepQBot(object):
             with tf.GradientTape() as tape:
                 for timestep in range(1, max_steps_per_episode):
                     
-                    iteration_profit = self.session_profit
+                    iteration_profit = 0
+                    print(f'DeepQBot: Training timestep {timestep} of {max_steps_per_episode}')
+
+                    # Get the current price of coin
+                    price_list = self.get_price(add_to_historical=False)
+                    price_current = float(price_list[self.TICKER + self.PAIR_WITH]['price'])
+                    #print(f"DeepQBot: Price of {self.TICKER} is {price_current}")
+
+                    #iteration_profit = self.session_profit
                     state = tf.convert_to_tensor(state)
                     state = tf.expand_dims(state, 0)
 
@@ -688,14 +709,38 @@ class DeepQBot(object):
                     critic_value_history.append(critic_value[0, 0])
 
                     # Sample action from action probability distribution
-                    self.action = np.random.choice(num_actions, p=np.squeeze(action_probs))
+                    action = np.random.choice(num_actions, p=np.squeeze(action_probs))
                     action_probs_history.append(tf.math.log(action_probs[0, self.action]))
 
+                    # ACTION LIST:
+                    # 0: BUY
+                    # 1: SELL
+                    # 2: HOLD
+
+                    print(f'DeepQBot: Action Recieved: {action}')
+
                     # Apply the sampled action in our environment
-                    self.step()
-                    # Wait before getting profit
-                    time.sleep(self.RECHECK_INTERVAL)
-                    iteration_profit = self.session_profit - iteration_profit
+                    #self.step()
+                    # Wait before getting a new price list
+                    time.sleep(60 / self.RECHECK_INTERVAL)
+
+                    # Check the new price
+                    price_list = self.get_price(add_to_historical=False)
+                    price_new = float(price_list[self.TICKER + self.PAIR_WITH]['price'])
+                    #print(f"DeepQBot: Price of {self.TICKER} is {price_new}")
+                    
+                    # REWARD BLOCK
+                    if (action == 0 or action == 2) and price_new > price_current:
+                        iteration_profit = price_new - price_current # Positive Reward
+                    elif (action == 0 or action == 2) and price_new < price_current:
+                        iteration_profit = price_new - price_current # Negative Reward   
+                    elif action == 1 and price_new < price_current:
+                        iteration_profit = price_current - price_new # Positive Reward
+                    elif action == 1 and price_new > price_current:
+                        iteration_profit = price_current - price_new # Negative Reward
+
+                    print(f'DeepQBot: Timestep Profit: {iteration_profit}')
+
                     rewards_history.append(iteration_profit)
                     episode_reward += iteration_profit
 
@@ -704,6 +749,7 @@ class DeepQBot(object):
 
                 # Update running reward to check condition for solving
                 running_reward = episode_reward + running_reward
+                print(f'DeepQBot: Total Profit: {running_reward}')
 
                 # Calculate expected value from rewards
                 # - At each timestep what was the total reward received after that timestep
@@ -754,6 +800,9 @@ class DeepQBot(object):
             if episode_count % 10 == 0:
                 template = "running reward: {:.2f} at episode {}"
                 print(template.format(running_reward, episode_count))
+
+            # Save the Model
+            model.save(self.SAVE_MODEL)
 
 
 
