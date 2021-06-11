@@ -651,16 +651,6 @@ class DeepQBot(object):
 
         return model
     
-    def step(self):
-            '''Execute a single step'''
-
-            #self.pause_bot()
-            orders, last_price, volume = self.buy()
-            self.update_portfolio(orders, last_price, volume)
-            coins_sold = self.sell_coins()
-            self.remove_from_portfolio(coins_sold)
-            return
-
     def trainNetwork(self):
         '''Train the RL Network'''
 
