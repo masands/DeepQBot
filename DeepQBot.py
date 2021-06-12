@@ -23,6 +23,7 @@ from tradingview_ta import TA_Handler, Interval, Exchange
 
 # use for environment variables
 import os
+import datetime
 
 # use if needed to pass args to external modules
 import sys
@@ -114,7 +115,7 @@ class DeepQBot(object):
     TRAILING_TAKE_PROFIT = .1,
     TRADING_FEE= .0075,
     LOAD_MODEL = None,
-    SAVE_MODEL = 'models/my_model.h5'
+    SAVE_MODEL = 'models/my_model'
     ):
         
         # tracks profit/loss each session
@@ -285,7 +286,7 @@ class DeepQBot(object):
                         #print(f'{coin} has gained {round(threshold_check, 3)}% within the last {self.TIME_DIFFERENCE} minutes.')
                         
                         # Here goes new code for external signalling
-                        externals, _, _ = self.external_signals()
+                        externals, _= self.external_signals()
                         exnumber = 0
 
                         for excoin in externals:
@@ -308,51 +309,13 @@ class DeepQBot(object):
     def external_signals(self):
         '''TA module to identify which coins to buy and sell'''
 
-        MY_EXCHANGE = 'BINANCE'
-        MY_SCREENER = 'CRYPTO'
-        INTERVAL = Interval.INTERVAL_5_MINUTES
-        PAIR_WITH = 'USDT'
-        TIME_TO_WAIT = 5 # Minutes to wait between analysis
-        FULL_LOG = False # List anylysis result to console
-
         buy_coins = {}
         sell_coins = {}
         analysis = {}
         handler = {}
         pairs = {}
 
-        pairs=[line.strip() for line in open(self.TICKERS_LIST)]
-        for line in open(self.TICKERS_LIST):
-            pairs=[line.strip() + PAIR_WITH for line in open(self.TICKERS_LIST)] 
-
-        for pair in pairs:
-        
-            handler[pair] = TA_Handler(
-                symbol=pair,
-                exchange=MY_EXCHANGE,
-                screener=MY_SCREENER,
-                interval=INTERVAL,
-                timeout= 10
-            )
-                    
-            try:
-                analysis = handler[pair].get_analysis()
-            except Exception as e:
-                print("Signalsample:")
-                print("Exception:")
-                print(e)
-                print (f'Coin: {pair}')
-                print (f'Handler: {handler[pair]}')
-
-            data = list(analysis.indicators.values())
-            state = np.array(data)
-
-            if self.action == 0:
-                buy_coins[pair] = pair
-            elif self.action == 1:
-                sell_coins[pair] = pair
-
-        return buy_coins, sell_coins, state
+        return buy_coins, sell_coins
 
     def pause_bot(self):
         '''Pause the script when exeternal indicators detect a bearish trend in the market'''
@@ -529,7 +492,7 @@ class DeepQBot(object):
         '''sell coins that have reached the STOP LOSS or TAKE PROFIT threshold'''
 
         # Here goes new code for external signalling
-        _, externals, _ = self.external_signals()
+        _, externals = self.external_signals()
         #print(externals)
         last_price = self.get_price(False) # don't populate rolling window
         #last_price = get_price(add_to_historical=True) # don't populate rolling window
@@ -633,24 +596,81 @@ class DeepQBot(object):
         with open(self.LOG_FILE,'a+') as f:
             f.write(timestamp + ' ' + logline + '\n')
 
-    def deepQModel(self):
+    def market_state(self):
+        '''Get the current market state'''
+        
+        EXCHANGE = 'BINANCE'
+        SCREENER = 'CRYPTO'
+        INTERVAL_LIST = [Interval.INTERVAL_1_MINUTE, Interval.INTERVAL_5_MINUTES, Interval.INTERVAL_15_MINUTES, 
+                 Interval.INTERVAL_1_HOUR, Interval.INTERVAL_4_HOURS, Interval.INTERVAL_1_DAY, Interval.INTERVAL_1_WEEK,
+                 Interval.INTERVAL_1_MONTH] 
+        
+        state = []
+        for INTERVAL in INTERVAL_LIST:
+            
+            try:
+                handler = TA_Handler(symbol=self.TICKER + self.PAIR_WITH,
+                                exchange=EXCHANGE,
+                                screener=SCREENER,
+                                interval=INTERVAL,
+                                timeout= 10)
+            except Exception as e:
+                print("market_state:")
+                print("Exception:")
+                print(e)
+                print (f'Coin: {self.TICKER }')
+            
+            analysis = handler.get_analysis()
+            data = list(analysis.indicators.values())
+            state.append(data)
+        
+        state = np.asarray(state).astype('float32')
+        state = np.nan_to_num(state)
+        state = state.flatten()
+        return state
+
+    def deepQModel(self, num_inputs = 696):
         '''Build a neural network model'''
 
-        num_inputs = 87 # Default number of trading view indicators
         num_actions = 3 # Buy, Sell, Hold
         num_hidden = 10
 
+        # Minute Input
+        inp_time_minute = layers.Input(shape=(1, ))
+        emb_t1 = layers.Embedding(61, 4)(inp_time_minute)
+        emb_t1 = layers.Flatten()(emb_t1)
+
+        # Hour Input
+        inp_time_hour = layers.Input(shape=(1, ))
+        emb_t2 = layers.Embedding(25, 4)(inp_time_hour)
+        emb_t2 = layers.Flatten()(emb_t2)
+
+        # Day Input
+        inp_time_day = layers.Input(shape=(1, ))
+        emb_t3 = layers.Embedding(32, 4)(inp_time_day)
+        emb_t3 = layers.Flatten()(emb_t3)
+
+        # Month Input
+        inp_time_month = layers.Input(shape=(1, ))
+        emb_t4 = layers.Embedding(13, 4)(inp_time_month)
+        emb_t4 = layers.Flatten()(emb_t4)
+
+        # TA Input
         inputs = layers.Input(shape=(num_inputs,))
-        common_1 = layers.Dense(num_hidden, activation="relu")(inputs)
+
+        # Concatenate Inputs
+        conct1 = layers.Concatenate(axis=-1)([inputs, emb_t1, emb_t2, emb_t3, emb_t4])
+
+        common_1 = layers.Dense(num_hidden, activation="relu")(conct1)
         common_2 = layers.Dense(num_hidden, activation="relu")(common_1)
         common_3 = layers.Dense(num_hidden, activation="relu")(common_2)
         action = layers.Dense(num_actions, activation="softmax")(common_3)
         critic = layers.Dense(1)(common_3)
 
-        model = keras.Model(inputs=inputs, outputs=[action, critic])
+        model = keras.Model(inputs=[inp_time_minute, inp_time_hour, inp_time_day, inp_time_month, inputs], outputs=[action, critic])
 
         return model
-    
+
     def trainNetwork(self):
         '''Train the RL Network'''
 
@@ -661,7 +681,7 @@ class DeepQBot(object):
         rewards_history = []
         running_reward = 0
         episode_count = 0
-        max_steps_per_episode = 100
+        max_steps_per_episode = 10
         gamma = 0.99
         eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
         num_actions = 3 # Buy, Sell, Hold
@@ -675,7 +695,7 @@ class DeepQBot(object):
             model = self.deepQModel()
 
         while True:  # Run until solved
-            _, _, state = self.external_signals()
+            state = self.market_state()
             episode_reward = 0
             
             with tf.GradientTape() as tape:
@@ -693,9 +713,24 @@ class DeepQBot(object):
                     state = tf.convert_to_tensor(state)
                     state = tf.expand_dims(state, 0)
 
+                    # Get Time
+                    now = datetime.now()
+                    
+                    minute = tf.convert_to_tensor(float(now.minute))
+                    minute = tf.expand_dims(minute, 0)
+                   
+                    hour = tf.convert_to_tensor(float(now.hour))
+                    hour = tf.expand_dims(hour, 0)
+                    
+                    day = tf.convert_to_tensor(float(now.day))
+                    day = tf.expand_dims(day, 0)
+                    
+                    month = tf.convert_to_tensor(float(now.month))
+                    month = tf.expand_dims(month, 0)
+
                     # Predict action probabilities and estimated future rewards
                     # from environment state
-                    action_probs, critic_value = model(state)
+                    action_probs, critic_value = model([minute, hour, day, month, state])
                     critic_value_history.append(critic_value[0, 0])
 
                     # Sample action from action probability distribution
@@ -712,7 +747,8 @@ class DeepQBot(object):
                     # Apply the sampled action in our environment
                     #self.step()
                     # Wait before getting a new price list
-                    time.sleep(60 / self.RECHECK_INTERVAL)
+                    print(f"DeepQBot: Waiting {self.TIME_DIFFERENCE} minutes for next analysis.")
+                    time.sleep(self.TIME_DIFFERENCE * 60)
 
                     # Check the new price
                     price_list = self.get_price(add_to_historical=False)
@@ -737,7 +773,7 @@ class DeepQBot(object):
                     episode_reward += iteration_profit
 
                     # Get new state
-                    _, _, state = self.external_signals()
+                    state = self.market_state()
 
                 # Update running reward to check condition for solving
                 running_reward = 0.05 * episode_reward + (1 - 0.05) * running_reward
