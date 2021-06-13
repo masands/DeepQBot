@@ -52,6 +52,8 @@ from itertools import count
 
 # used to store trades and sell assets
 import json
+import requests
+import pandas as pd
 
 # Load creds modules
 from helpers.handle_creds import (
@@ -93,6 +95,7 @@ class DeepQBot(object):
     def __init__(self, 
     access_key,
     secret_key,
+    GLASSNODE_KEY,
     TEST_MODE = True, 
     LOG_TRADES = True, 
     LOG_FILE = "trades.txt",
@@ -107,13 +110,11 @@ class DeepQBot(object):
     CHANGE_IN_PRICE = 0,
     STOP_LOSS = 5,
     TAKE_PROFIT = 5,
-    CUSTOM_LIST = False,
-    TICKERS_LIST = 'tickers.txt',
     TICKER = "BTC",
     USE_TRAILING_STOP_LOSS = True,
     TRAILING_STOP_LOSS = .2,
     TRAILING_TAKE_PROFIT = .1,
-    TRADING_FEE= .0075,
+    TRADING_FEE= .075,
     LOAD_MODEL = None,
     SAVE_MODEL = 'models/my_model'
     ):
@@ -142,9 +143,7 @@ class DeepQBot(object):
         self.RECHECK_INTERVAL = RECHECK_INTERVAL
         self.CHANGE_IN_PRICE = CHANGE_IN_PRICE
         self.STOP_LOSS = STOP_LOSS
-        self.CUSTOM_LIST = CUSTOM_LIST
         self.TAKE_PROFIT = TAKE_PROFIT
-        self.TICKERS_LIST = TICKERS_LIST
         self.USE_TRAILING_STOP_LOSS = USE_TRAILING_STOP_LOSS
         self.TRAILING_STOP_LOSS = TRAILING_STOP_LOSS
         self.TRAILING_TAKE_PROFIT = TRAILING_TAKE_PROFIT
@@ -158,6 +157,7 @@ class DeepQBot(object):
         # Load creds for correct environment
         self.access_key = access_key
         self.secret_key = secret_key
+        self.GLASSNODE_KEY = GLASSNODE_KEY
 
         # Authenticate with the client, Ensure API key is good before continuing
         if self.AMERICAN_USER:
@@ -170,9 +170,6 @@ class DeepQBot(object):
         api_ready, msg = test_api_key(self.client, BinanceAPIException)
         if api_ready is not True:
             exit(f'{txcolors.SELL_LOSS}{msg}{txcolors.DEFAULT}') 
-
-        # Use CUSTOM_LIST symbols if CUSTOM_LIST is set to True
-        if CUSTOM_LIST: self.tickers=[line.strip() for line in open(TICKERS_LIST)]
 
         # try to load all the coins bought by the bot if the file exists and is not empty
         self.coins_bought = {}
@@ -202,10 +199,20 @@ class DeepQBot(object):
         self.get_price()
 
     def run_bot(self):
-        
+        ''' Starts the bot'''
+
+        if self.LOAD_MODEL == None:
+            print(f'{txcolors.WARNING}DeepQBot: No model loaded! Use LOAD_MODEL to provide a trained Keras RL model or train a new model using trainNetwork. Bot will now exit!')
+            return
+
+        # Start bot training in a new thread
+        print(f'{txcolors.DEFAULT}DeepQBot: Starting model training!')
+        bot_train = threading.Thread(target=self.trainNetwork)
+        bot_train.start()
+
+        print(f'{txcolors.DEFAULT}DeepQBot: Starting model prediction!')
         while True:
             #try:
-            #self.pause_bot()
             orders, last_price, volume = self.buy()
             self.update_portfolio(orders, last_price, volume)
             coins_sold = self.sell_coins()
@@ -221,12 +228,8 @@ class DeepQBot(object):
 
         for coin in prices:
 
-            if self.CUSTOM_LIST:
-                if any(item + self.PAIR_WITH == coin['symbol'] for item in self.tickers) and all(item not in coin['symbol'] for item in self.FIATS):
-                    initial_price[coin['symbol']] = { 'price': coin['price'], 'time': datetime.now()}
-            else:
-                if self.PAIR_WITH in coin['symbol'] and all(item not in coin['symbol'] for item in self.FIATS):
-                    initial_price[coin['symbol']] = { 'price': coin['price'], 'time': datetime.now()}
+            if self.PAIR_WITH in coin['symbol'] and all(item not in coin['symbol'] for item in self.FIATS):
+                initial_price[coin['symbol']] = { 'price': coin['price'], 'time': datetime.now()}
 
         if add_to_historical:
             self.hsp_head += 1
@@ -248,8 +251,6 @@ class DeepQBot(object):
         coins_up = 0
         coins_down = 0
         coins_unchanged = 0
-
-        #self.pause_bot()
 
         if self.historical_prices[self.hsp_head]['BNB' + self.PAIR_WITH]['time'] > datetime.now() - timedelta(minutes=float(self.TIME_DIFFERENCE / self.RECHECK_INTERVAL)):
 
@@ -316,78 +317,6 @@ class DeepQBot(object):
         pairs = {}
 
         return buy_coins, sell_coins
-
-    def pause_bot(self):
-        '''Pause the script when exeternal indicators detect a bearish trend in the market'''
-
-        MY_FIRST_INTERVAL = Interval.INTERVAL_5_MINUTES
-        MY_SECOND_INTERVAL = Interval.INTERVAL_15_MINUTES
-
-        EXCHANGE = 'BINANCE'
-        SCREENER = 'CRYPTO'
-        SYMBOL = 'BTCUSDT'
-        PAUSE_INTERVAL = 1 # Minutes
-
-        analysis = {}
-        first_handler = {}
-        second_handler = {}
-        
-        # start counting for how long the bot's been paused
-        start_time = time.perf_counter()
-
-        self.bot_paused = True
-        while self.bot_paused == True:
-            
-            first_handler = TA_Handler(
-                    symbol=SYMBOL,
-                    exchange=EXCHANGE,
-                    screener=SCREENER,
-                    interval=MY_FIRST_INTERVAL,
-                    timeout= 10)
-            
-            second_handler = TA_Handler(
-                    symbol=SYMBOL,
-                    exchange=EXCHANGE,
-                    screener=SCREENER,
-                    interval=MY_SECOND_INTERVAL,
-                    timeout= 10)
-
-            try:
-                first_analysis = first_handler.get_analysis()
-                second_analysis = second_handler.get_analysis()
-            except Exception as e:
-                print("pausebotmod:")
-                print("Exception:")
-                print(e)
-            
-            first_market_summary = first_analysis.summary['RECOMMENDATION']
-            second_market_summary = second_analysis.summary['RECOMMENDATION']
-
-            if first_market_summary == "SELL" or first_market_summary == "STRONG_SELL" or second_market_summary == "SELL" or second_market_summary == "STRONG_SELL":
-                self.bot_paused = True
-                print(f'Market not looking too good, bot paused from buying {first_analysis.summary} {second_analysis.summary} .Waiting {PAUSE_INTERVAL} minutes for next market checkup')
-
-            else:
-                print(f'Market looks ok, bot is running {first_analysis.summary} {second_analysis.summary}')
-                self.bot_paused = False
-                return
-
-            print(f'{txcolors.WARNING}Pausing buying due to change in market conditions, stop loss and take profit will continue to work...{txcolors.DEFAULT}')
-
-            # Sell function needs to work even while paused
-            coins_sold = self.sell_coins()
-            self.remove_from_portfolio(coins_sold)
-            self.get_price(True)
-
-            # pausing here
-            if self.hsp_head == 1: print(f'Paused...Session profit:{self.session_profit:.2f}% Est:${(self.QUANTITY * self.session_profit)/100:.2f}')
-            time.sleep(PAUSE_INTERVAL)
-
-        stop_time = time.perf_counter()
-        time_elapsed = timedelta(seconds=int(stop_time-start_time))
-        print(f'{txcolors.WARNING}Resuming buying due to change in market conditions, total sleep time: {time_elapsed}{txcolors.DEFAULT}')
-
-        return
 
     def convert_volume(self):
         '''Converts the volume given in QUANTITY from USDT to the each coin's volume'''
@@ -605,6 +534,7 @@ class DeepQBot(object):
                  Interval.INTERVAL_1_HOUR, Interval.INTERVAL_4_HOURS, Interval.INTERVAL_1_DAY, Interval.INTERVAL_1_WEEK,
                  Interval.INTERVAL_1_MONTH] 
         
+        # Get data from trading view
         state = []
         for INTERVAL in INTERVAL_LIST:
             
@@ -624,12 +554,29 @@ class DeepQBot(object):
             data = list(analysis.indicators.values())
             state.append(data)
         
+        # Get data from Glassnode on-chain metrics
+        payload = {'a':self.TICKER, 'f':'JSON', 'c':'USD', 'api_key': self.GLASSNODE_KEY}
+        inflow_exchanges = requests.get("https://api.glassnode.com/v1/metrics/transactions/transfers_volume_to_exchanges_sum", payload)
+        outflow_exhanges = requests.get("https://api.glassnode.com/v1/metrics/transactions/transfers_volume_from_exchanges_sum", payload)
+        exhanges_deposits = requests.get("https://api.glassnode.com/v1/metrics/transactions/transfers_to_exchanges_count", payload)
+        exhanges_withdrawals = requests.get("https://api.glassnode.com/v1/metrics/transactions/transfers_from_exchanges_count", payload)               
+        
         state = np.asarray(state).astype('float32')
         state = np.nan_to_num(state)
         state = state.flatten()
+
+        df = pd.read_json(inflow_exchanges.text, convert_dates=['t'])
+        state = np.append(state, df.iloc[-1,1])
+        df = pd.read_json(outflow_exhanges.text, convert_dates=['t'])
+        state = np.append(state, df.iloc[-1,1])
+        df = pd.read_json(exhanges_deposits.text, convert_dates=['t'])
+        state = np.append(state, df.iloc[-1,1])
+        df = pd.read_json(exhanges_withdrawals.text, convert_dates=['t'])
+        state = np.append(state, df.iloc[-1,1])
+
         return state
 
-    def deepQModel(self, num_inputs = 696):
+    def deepQModel(self, num_inputs = 700):
         '''Build a neural network model'''
 
         num_actions = 2 # Buy, Sell
