@@ -632,8 +632,7 @@ class DeepQBot(object):
     def deepQModel(self, num_inputs = 696):
         '''Build a neural network model'''
 
-        num_actions = 3 # Buy, Sell, Hold
-        num_hidden = 10
+        num_actions = 2 # Buy, Sell
 
         # Minute Input
         inp_time_minute = layers.Input(shape=(1, ))
@@ -660,12 +659,21 @@ class DeepQBot(object):
 
         # Concatenate Inputs
         conct1 = layers.Concatenate(axis=-1)([inputs, emb_t1, emb_t2, emb_t3, emb_t4])
-
-        common_1 = layers.Dense(num_hidden, activation="relu")(conct1)
-        common_2 = layers.Dense(num_hidden, activation="relu")(common_1)
-        common_3 = layers.Dense(num_hidden, activation="relu")(common_2)
-        action = layers.Dense(num_actions, activation="softmax")(common_3)
-        critic = layers.Dense(1)(common_3)
+        
+        # Normalise Inputs
+        norml = layers.LayerNormalization()(conct1)
+        
+        # Dense Layers
+        common_1 = layers.Dense(500, activation="relu")(norml)
+        common_2 = layers.Dense(250, activation="relu")(common_1)
+        common_3 = layers.Dense(100, activation="relu")(common_2)
+        common_4 = layers.Dense(50, activation="relu")(common_3)
+        
+        # Action
+        action = layers.Dense(num_actions, activation="softmax")(common_4)
+        
+        # Critic
+        critic = layers.Dense(1)(common_4)
 
         model = keras.Model(inputs=[inp_time_minute, inp_time_hour, inp_time_day, inp_time_month, inputs], outputs=[action, critic])
 
@@ -684,15 +692,15 @@ class DeepQBot(object):
         max_steps_per_episode = 10
         gamma = 0.99
         eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
-        num_actions = 3 # Buy, Sell, Hold
+        num_actions = 2 # Buy, Sell
         action = None
         
         if self.LOAD_MODEL != None:
             # Load an existing model
-            model = keras.models.load_model(self.LOAD_MODEL)
+            self.model = keras.models.load_model(self.LOAD_MODEL)
         else:
             # Load a New Model
-            model = self.deepQModel()
+            self.model = self.deepQModel()
 
         while True:  # Run until solved
             state = self.market_state()
@@ -730,7 +738,7 @@ class DeepQBot(object):
 
                     # Predict action probabilities and estimated future rewards
                     # from environment state
-                    action_probs, critic_value = model([minute, hour, day, month, state])
+                    action_probs, critic_value = self.model([minute, hour, day, month, state])
                     critic_value_history.append(critic_value[0, 0])
 
                     # Sample action from action probability distribution
@@ -740,7 +748,6 @@ class DeepQBot(object):
                     # ACTION LIST:
                     # 0: BUY
                     # 1: SELL
-                    # 2: HOLD
 
                     print(f'DeepQBot: Action Recieved: {action}')
 
@@ -756,14 +763,14 @@ class DeepQBot(object):
                     #print(f"DeepQBot: Price of {self.TICKER} is {price_new}")
                     
                     # REWARD BLOCK
-                    if (action == 0 or action == 2) and price_new > price_current:
-                        iteration_profit = price_new - price_current # Positive Reward
-                    elif (action == 0 or action == 2) and price_new < price_current:
-                        iteration_profit = price_new - price_current # Negative Reward   
+                    if action == 0 and price_new > price_current:
+                        iteration_profit = (price_new - price_current) / price_current * 100 # Positive Reward
+                    elif action == 0 and price_new < price_current:
+                        iteration_profit = (price_new - price_current) / price_current * 100 # Negative Reward   
                     elif action == 1 and price_new < price_current:
-                        iteration_profit = price_current - price_new # Positive Reward
+                        iteration_profit = (price_current - price_new) / price_current * 100 # Positive Reward
                     elif action == 1 and price_new > price_current:
-                        iteration_profit = price_current - price_new # Negative Reward
+                        iteration_profit = (price_current - price_new) / price_current * 100 # Negative Reward
                     else:
                         iteration_profit = 0
 
@@ -815,8 +822,8 @@ class DeepQBot(object):
 
                 # Backpropagation
                 loss_value = sum(actor_losses) + sum(critic_losses)
-                grads = tape.gradient(loss_value, model.trainable_variables)
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+                grads = tape.gradient(loss_value, self.model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
                 # Clear the loss and reward history
                 action_probs_history.clear()
@@ -830,7 +837,7 @@ class DeepQBot(object):
                 print(template.format(running_reward, episode_count))
 
             # Save the Model
-            model.save(self.SAVE_MODEL)
+            self.model.save(self.SAVE_MODEL)
 
 
 

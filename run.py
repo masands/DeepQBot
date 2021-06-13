@@ -22,5 +22,5 @@ if __name__ == '__main__':
     access_key, secret_key = load_correct_creds(parsed_creds)
 
     # Create a new bot
-    bot = DeepQBot(access_key, secret_key, CHANGE_IN_PRICE = 0.1)
+    bot = DeepQBot(access_key, secret_key)
     bot.trainNetwork()
